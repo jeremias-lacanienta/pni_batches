@@ -15,8 +15,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 try:
-    import psycopg2
-    import psycopg2.extras
+    import pg8000.native
     import yaml
     import boto3
     from botocore.exceptions import ClientError, NoCredentialsError
@@ -80,8 +79,13 @@ def export_prompts(environment: str) -> Dict[str, Any]:
     db_config = get_database_config(environment)
     
     try:
-        connection = psycopg2.connect(**db_config)
-        cursor = connection.cursor()
+        connection = pg8000.native.Connection(
+            user=db_config['user'],
+            password=db_config['password'],
+            host=db_config['host'],
+            port=db_config['port'],
+            database=db_config['database']
+        )
         
         # SQL query to fetch prompts
         query = """
@@ -97,8 +101,7 @@ def export_prompts(environment: str) -> Dict[str, Any]:
         """
         
         logger.info(f"Fetching prompts from {environment} environment")
-        cursor.execute(query)
-        results = cursor.fetchall()
+        results = connection.run(query)
         
         # Group by category
         categories = {}
@@ -154,8 +157,11 @@ def export_prompts(environment: str) -> Dict[str, Any]:
 def lambda_handler(event, context):
     """Lambda entry point"""
     try:
-        # Get environment from event or default to 'dev'
-        environment = event.get('environment', 'dev')
+        # Determine environment from AWS region
+        region = context.invoked_function_arn.split(':')[3]  # Extract region from ARN
+        environment = 'dev' if region == 'us-east-1' else 'prod'
+        
+        logger.info(f"Detected region: {region}, using environment: {environment}")
         
         if environment not in ['dev', 'prod']:
             return {

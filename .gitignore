@@ -21,6 +21,7 @@ env/
 .idea/
 
 # Ignore log and cache files
+temp/
 *.log
 .cache/
 
