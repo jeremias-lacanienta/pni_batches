@@ -8,6 +8,7 @@ This directory contains the Lambda function for migrating prompt groups from Pos
 - `deploy-lambda.sh` - Main deployment script for both environments
 - `deploy-dev.sh` - Quick deploy to dev (us-east-1)
 - `deploy-prod.sh` - Quick deploy to prod (eu-west-1)
+- `manage-schedule.sh` - EventBridge schedule management script
 
 ## Environment Variables
 
@@ -21,7 +22,7 @@ The Lambda function requires the following environment variables:
 
 ## Deployment
 
-### Deploy to Both Environments
+### Deploy to Both Environments (with EventBridge schedule)
 ```bash
 ./deploy-lambda.sh deploy
 ```
@@ -44,6 +45,40 @@ The Lambda function requires the following environment variables:
 # Test prod environment
 ./deploy-lambda.sh test prod
 ```
+
+### Clean up EventBridge Schedules
+```bash
+# Remove all schedules
+./deploy-lambda.sh cleanup all
+
+# Remove specific environment schedule
+./deploy-lambda.sh cleanup dev
+```
+
+## EventBridge Schedule Management
+
+The Lambda functions are automatically scheduled to run every 10 minutes using EventBridge.
+
+### Manage Schedules
+```bash
+# Check schedule status
+./manage-schedule.sh status
+
+# Enable/disable schedules
+./manage-schedule.sh enable all
+./manage-schedule.sh disable prod
+
+# Update schedule frequency
+./manage-schedule.sh update all "5 minutes"
+./manage-schedule.sh update dev "1 hour"
+```
+
+### Schedule Details
+- **Default frequency**: Every 10 minutes
+- **Rule names**: 
+  - `prompt-group-migration-schedule-dev`
+  - `prompt-group-migration-schedule-prod`
+- **Trigger payload**: `{"environment": "dev"}` or `{"environment": "prod"}`
 
 ## Lambda Function Details
 
@@ -92,3 +127,15 @@ The Lambda function requires:
 - Basic Lambda execution permissions
 - S3 PutObject permissions on the target bucket
 - Network access to PostgreSQL database
+
+**EventBridge requires:**
+- `events:PutRule` - Create/update EventBridge rules
+- `events:PutTargets` - Add Lambda as target
+- `events:EnableRule`/`events:DisableRule` - Manage rule state
+- `lambda:AddPermission` - Allow EventBridge to invoke Lambda
+
+## Monitoring
+
+- **CloudWatch Logs**: `/aws/lambda/prompt-group-migration-dev` and `/aws/lambda/prompt-group-migration-prod`
+- **EventBridge Rules**: Monitor rule execution in EventBridge console
+- **S3 Objects**: Check timestamp metadata on uploaded YAML files

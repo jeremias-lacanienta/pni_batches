@@ -69,6 +69,51 @@ EOF
     log_success "Deployment package created: $LAMBDA_ZIP"
 }
 
+# Function to create EventBridge rule
+create_eventbridge_rule() {
+    local environment=$1
+    local region=$2
+    local function_name="${FUNCTION_NAME}-${environment}"
+    local rule_name="${FUNCTION_NAME}-schedule-${environment}"
+    
+    log "Creating EventBridge rule for $function_name..."
+    
+    # Create EventBridge rule for 10-minute schedule
+    aws events put-rule \
+        --name "$rule_name" \
+        --schedule-expression "rate(10 minutes)" \
+        --description "Trigger prompt migration every 10 minutes for $environment" \
+        --state ENABLED \
+        --region "$region" \
+        --output table
+    
+    # Get the Lambda function ARN
+    local function_arn=$(aws lambda get-function \
+        --function-name "$function_name" \
+        --region "$region" \
+        --query 'Configuration.FunctionArn' \
+        --output text)
+    
+    # Add Lambda target to the rule
+    aws events put-targets \
+        --rule "$rule_name" \
+        --targets "Id=1,Arn=$function_arn,Input={\"environment\":\"$environment\"}" \
+        --region "$region" \
+        --output table
+    
+    # Add permission for EventBridge to invoke Lambda
+    aws lambda add-permission \
+        --function-name "$function_name" \
+        --statement-id "eventbridge-invoke-$environment" \
+        --action "lambda:InvokeFunction" \
+        --principal "events.amazonaws.com" \
+        --source-arn "arn:aws:events:$region:$(aws sts get-caller-identity --query Account --output text):rule/$rule_name" \
+        --region "$region" \
+        --output table || log_warning "Permission may already exist"
+    
+    log_success "EventBridge rule $rule_name created and configured"
+}
+
 # Function to deploy Lambda
 deploy_lambda() {
     local environment=$1
@@ -145,6 +190,31 @@ EOF
                 --policy-name "S3AccessPolicy" \
                 --policy-document file://s3-policy.json
             
+            # Create and attach EventBridge policy
+            cat > eventbridge-policy.json << EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "events:PutRule",
+        "events:PutTargets",
+        "events:EnableRule",
+        "events:DisableRule",
+        "events:DescribeRule"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+EOF
+            
+            aws iam put-role-policy \
+                --role-name "$ROLE_NAME" \
+                --policy-name "EventBridgeAccessPolicy" \
+                --policy-document file://eventbridge-policy.json
+            
             ROLE_ARN="arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):role/$ROLE_NAME"
             
             # Wait for role to be available
@@ -152,7 +222,7 @@ EOF
             sleep 10
             
             # Cleanup policy files
-            rm -f trust-policy.json s3-policy.json
+            rm -f trust-policy.json s3-policy.json eventbridge-policy.json
         fi
         
         # Create Lambda function
@@ -176,6 +246,41 @@ EOF
     fi
     
     log_success "Deployed $function_name to $region"
+    
+    # Create EventBridge schedule
+    create_eventbridge_rule "$environment" "$region"
+}
+
+# Function to remove EventBridge rule
+remove_eventbridge_rule() {
+    local environment=$1
+    local region=$2
+    local function_name="${FUNCTION_NAME}-${environment}"
+    local rule_name="${FUNCTION_NAME}-schedule-${environment}"
+    
+    log "Removing EventBridge rule for $function_name..."
+    
+    # Remove targets first
+    aws events remove-targets \
+        --rule "$rule_name" \
+        --ids "1" \
+        --region "$region" \
+        2>/dev/null || log_warning "No targets to remove"
+    
+    # Delete the rule
+    aws events delete-rule \
+        --name "$rule_name" \
+        --region "$region" \
+        2>/dev/null || log_warning "Rule may not exist"
+    
+    # Remove Lambda permission
+    aws lambda remove-permission \
+        --function-name "$function_name" \
+        --statement-id "eventbridge-invoke-$environment" \
+        --region "$region" \
+        2>/dev/null || log_warning "Permission may not exist"
+    
+    log_success "EventBridge rule $rule_name removed"
 }
 
 # Function to test Lambda
@@ -214,7 +319,7 @@ main() {
     
     case $action in
         "deploy")
-            log "Starting Lambda deployment..."
+            log "Starting Lambda deployment with EventBridge schedule..."
             create_deployment_package
             
             # Deploy to dev (us-east-1)
@@ -228,13 +333,14 @@ main() {
             # Cleanup
             rm -f "$LAMBDA_ZIP"
             
-            log_success "All deployments completed!"
+            log_success "All deployments completed with EventBridge schedules!"
+            log "Both Lambda functions will now run automatically every 10 minutes"
             ;;
         "deploy-single")
             local environment=${2:-"dev"}
             local region=${3:-"us-east-1"}
             
-            log "Starting single Lambda deployment for $environment..."
+            log "Starting single Lambda deployment for $environment with EventBridge schedule..."
             create_deployment_package
             
             deploy_lambda "$environment" "$region"
@@ -242,7 +348,25 @@ main() {
             # Cleanup
             rm -f "$LAMBDA_ZIP"
             
-            log_success "Deployment completed for $environment!"
+            log_success "Deployment completed for $environment with EventBridge schedule!"
+            log "Lambda function will now run automatically every 10 minutes"
+            ;;
+        "cleanup")
+            local environment=${2:-"all"}
+            
+            if [ "$environment" = "all" ]; then
+                log "Cleaning up all EventBridge schedules..."
+                remove_eventbridge_rule "dev" "us-east-1"
+                remove_eventbridge_rule "prod" "eu-west-1"
+            else
+                local region="us-east-1"
+                if [ "$environment" = "prod" ]; then
+                    region="eu-west-1"
+                fi
+                remove_eventbridge_rule "$environment" "$region"
+            fi
+            
+            log_success "EventBridge cleanup completed"
             ;;
         "test")
             environment=${2:-"dev"}
@@ -253,7 +377,19 @@ main() {
             test_lambda "$environment" "$region"
             ;;
         *)
-            log_error "Usage: $0 [deploy|deploy-single|test] [environment] [region]"
+            log_error "Usage: $0 [deploy|deploy-single|cleanup|test] [environment] [region]"
+            echo ""
+            echo "Commands:"
+            echo "  deploy              - Deploy to both dev and prod with EventBridge schedules"
+            echo "  deploy-single ENV   - Deploy to specific environment with EventBridge schedule"
+            echo "  cleanup [ENV|all]   - Remove EventBridge schedules (default: all)"
+            echo "  test ENV            - Test Lambda function"
+            echo ""
+            echo "Examples:"
+            echo "  $0 deploy                    # Deploy both with schedules"
+            echo "  $0 deploy-single dev         # Deploy dev only with schedule"
+            echo "  $0 cleanup prod             # Remove prod schedule only"
+            echo "  $0 test dev                 # Test dev function"
             exit 1
             ;;
     esac
