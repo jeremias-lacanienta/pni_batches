@@ -56,15 +56,7 @@ EOF
     
     # Install dependencies in the package directory
     log "Installing dependencies..."
-    
-    # Use the project's virtual environment if available
-    VENV_PYTHON="$SCRIPT_DIR/.venv/bin/python"
-    if [ -f "$VENV_PYTHON" ]; then
-        "$VENV_PYTHON" -m pip install -r "$TEMP_DIR/requirements.txt" -t "$TEMP_DIR" --quiet
-    else
-        # Fall back to system Python
-        pip install -r "$TEMP_DIR/requirements.txt" -t "$TEMP_DIR" --quiet
-    fi
+    pip install -r "$TEMP_DIR/requirements.txt" -t "$TEMP_DIR" --quiet
     
     # Create ZIP file
     cd "$TEMP_DIR"

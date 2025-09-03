@@ -9,22 +9,6 @@ This directory contains the Lambda function for migrating prompt groups from Pos
 - `deploy-dev.sh` - Quick deploy to dev (us-east-1)
 - `deploy-prod.sh` - Quick deploy to prod (eu-west-1)
 - `manage-schedule.sh` - EventBridge schedule management script
-- `setup.sh` - Setup script to create virtual environment and install dependencies
-- `requirements.txt` - Python dependencies
-
-## Setup
-
-Before deploying or running locally, set up the Python environment:
-
-```bash
-# Run the setup script (creates .venv and installs dependencies)
-./setup.sh
-
-# Or manually:
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
 
 ## Environment Variables
 
