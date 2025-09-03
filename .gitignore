@@ -1,0 +1,38 @@
+# .gitignore for local-batch project
+# Ignore Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore environment files and folders
+.env
+.env.*
+.venv/
+venv/
+ENV/
+env/
+
+# Ignore OS files
+.DS_Store
+
+# Ignore editor files
+.vscode/
+.idea/
+
+# Ignore log and cache files
+*.log
+.cache/
+
+# Ignore backup files
+*~
+*.bak
+*.swp
+
+# Ignore test output
+htmlcov/
+.coverage
+
+# Ignore database dumps
+*.sqlite3
+*.db
