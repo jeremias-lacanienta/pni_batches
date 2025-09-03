@@ -1,0 +1,641 @@
+#!/usr/bin/env python3
+"""
+PostgreSQL to DynamoDB Migration Script
+- Run locally (no AWS infrastructure changes needed)
+- Create DynamoDB tables if they don't exist
+- Copy lesson and question data from PostgreSQL to DynamoDB
+- Use BatchWrite for fast bulk operations
+- Preserve cache structure from lambda/simple-cache-builder.js
+"""
+
+
+import os
+import json
+import time
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, List, Any
+import boto3
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from botocore.exceptions import ClientError
+import configparser
+
+
+# Load PostgreSQL credentials from ~/.aws/credentials
+aws_creds_path = os.path.expanduser('~/.aws/credentials')
+profile = os.getenv('PG_AWS_PROFILE', 'postgres-creds')
+config = configparser.ConfigParser()
+config.read(aws_creds_path)
+
+pg_user = config.get(profile, 'pg_user')
+pg_password = config.get(profile, 'pg_password')
+pg_host = config.get(profile, 'pg_host')
+# pg_database = config.get(profile, 'pg_database')
+pg_database = 'prod'
+pg_port = config.get(profile, 'pg_port', fallback='5432')
+
+POSTGRES_CONFIG = {
+    'host': pg_host,
+    'port': pg_port,
+    'database': pg_database,
+    'user': pg_user,
+    'password': pg_password
+}
+
+AWS_REGION = os.getenv('AWS_DEFAULT_REGION', 'eu-west-1')
+LESSONS_TABLE = 'pni-lessons'
+PASSAGES_TABLE = 'pni-passages'
+TOPICS_TABLE = 'pni-topics'
+CACHE_METADATA_TABLE = 'pni-cache-metadata'
+
+
+
+# DynamoDB and PostgreSQL clients (use AWS CLI credentials file)
+import botocore
+aws_profile = os.getenv('AWS_PROFILE', 'default')
+session = boto3.Session(profile_name=aws_profile)
+dynamodb = session.resource('dynamodb', region_name=AWS_REGION)
+dynamodb_client = session.client('dynamodb', region_name=AWS_REGION)
+
+# Debug: print which AWS credentials are being used
+creds = session.get_credentials()
+if creds:
+    frozen = creds.get_frozen_credentials()
+    print(f"[DEBUG] Using AWS profile: {aws_profile}")
+    print(f"[DEBUG] AWS Access Key: {frozen.access_key}")
+    print(f"[DEBUG] AWS Secret Key: {frozen.secret_key[:6]}... (truncated)")
+else:
+    print(f"[DEBUG] No AWS credentials found for profile: {aws_profile}")
+
+def print_progress(message: str, level: str = "INFO"):
+    """Print formatted progress messages"""
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {level}: {message}")
+
+def verify_table_exists(table_name: str) -> bool:
+    """Verify that a DynamoDB table exists and is active"""
+    try:
+        table = dynamodb.Table(table_name)
+        table.load()
+        if table.table_status == 'ACTIVE':
+            print_progress(f"✅ Table {table_name} exists and is active")
+            return True
+        else:
+            print_progress(f"❌ Table {table_name} exists but status is: {table.table_status}", "ERROR")
+            return False
+    except ClientError as e:
+        print_progress(f"❌ Table {table_name} does not exist: {e}", "ERROR")
+        return False
+    except Exception as e:
+        print_progress(f"❌ Error checking table {table_name}: {e}", "ERROR")
+        return False
+
+def create_lessons_table():
+    """Create lessons table with partition key and sort key"""
+    try:
+        table = dynamodb.create_table(
+            TableName=LESSONS_TABLE,
+            KeySchema=[
+                {'AttributeName': 'proficiency', 'KeyType': 'HASH'},  # Partition key
+                {'AttributeName': 'id', 'KeyType': 'RANGE'}  # Sort key
+            ],
+            AttributeDefinitions=[
+                {'AttributeName': 'proficiency', 'AttributeType': 'S'},
+                {'AttributeName': 'id', 'AttributeType': 'N'}
+            ],
+            BillingMode='PAY_PER_REQUEST'
+        )
+        
+        # Wait for table to be created
+        print_progress(f"Creating table {LESSONS_TABLE}...")
+        table.wait_until_exists()
+        print_progress(f"Table {LESSONS_TABLE} created successfully")
+        return True
+        
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceInUseException':
+            print_progress(f"Table {LESSONS_TABLE} already exists")
+            return True
+        else:
+            print_progress(f"Error creating table {LESSONS_TABLE}: {e}", "ERROR")
+            return False
+
+def create_passages_table():
+    """Create passages table with lesson_id as partition key and passage_id as sort key"""
+    try:
+        table = dynamodb.create_table(
+            TableName=PASSAGES_TABLE,
+            KeySchema=[
+                {'AttributeName': 'lesson_id', 'KeyType': 'HASH'},  # Partition key
+                {'AttributeName': 'passage_id', 'KeyType': 'RANGE'}  # Sort key
+            ],
+            AttributeDefinitions=[
+                {'AttributeName': 'lesson_id', 'AttributeType': 'N'},
+                {'AttributeName': 'passage_id', 'AttributeType': 'S'},  # Changed to String for UUIDs
+                {'AttributeName': 'proficiency', 'AttributeType': 'S'}
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    'IndexName': 'proficiency-index',
+                    'KeySchema': [
+                        {'AttributeName': 'proficiency', 'KeyType': 'HASH'}
+                    ],
+                    'Projection': {'ProjectionType': 'ALL'}
+                }
+            ],
+            BillingMode='PAY_PER_REQUEST'
+        )
+        
+        # Wait for table to be created
+        print_progress(f"Creating table {PASSAGES_TABLE}...")
+        table.wait_until_exists()
+        print_progress(f"Table {PASSAGES_TABLE} created successfully")
+        return True
+        
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceInUseException':
+            print_progress(f"Table {PASSAGES_TABLE} already exists")
+            return True
+        else:
+            print_progress(f"Error creating table {PASSAGES_TABLE}: {e}", "ERROR")
+            return False
+
+def create_topics_table():
+    """Create topics table"""
+    try:
+        table = dynamodb.create_table(
+            TableName=TOPICS_TABLE,
+            KeySchema=[
+                {'AttributeName': 'topic', 'KeyType': 'HASH'}  # Partition key
+            ],
+            AttributeDefinitions=[
+                {'AttributeName': 'topic', 'AttributeType': 'S'}
+            ],
+            BillingMode='PAY_PER_REQUEST'
+        )
+        
+        print_progress(f"Creating table {TOPICS_TABLE}...")
+        table.wait_until_exists()
+        print_progress(f"Table {TOPICS_TABLE} created successfully")
+        return True
+        
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceInUseException':
+            print_progress(f"Table {TOPICS_TABLE} already exists")
+            return True
+        else:
+            print_progress(f"Error creating table {TOPICS_TABLE}: {e}", "ERROR")
+            return False
+
+def create_cache_metadata_table():
+    """Create cache metadata table"""
+    try:
+        table = dynamodb.create_table(
+            TableName=CACHE_METADATA_TABLE,
+            KeySchema=[
+                {'AttributeName': 'cache_type', 'KeyType': 'HASH'}  # Partition key
+            ],
+            AttributeDefinitions=[
+                {'AttributeName': 'cache_type', 'AttributeType': 'S'}
+            ],
+            BillingMode='PAY_PER_REQUEST'
+        )
+        
+        print_progress(f"Creating table {CACHE_METADATA_TABLE}...")
+        table.wait_until_exists()
+        print_progress(f"Table {CACHE_METADATA_TABLE} created successfully")
+        return True
+        
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceInUseException':
+            print_progress(f"Table {CACHE_METADATA_TABLE} already exists")
+            return True
+        else:
+            print_progress(f"Error creating table {CACHE_METADATA_TABLE}: {e}", "ERROR")
+            return False
+
+
+def get_postgres_connection():
+    """Create PostgreSQL connection"""
+    print_progress(f"Postgres connection parameters: {json.dumps(POSTGRES_CONFIG, indent=2)}", "DEBUG")
+    try:
+        conn = psycopg2.connect(**POSTGRES_CONFIG)
+        print_progress("Connected to PostgreSQL successfully")
+        return conn
+    except Exception as e:
+        print_progress(f"Error connecting to PostgreSQL: {e}", "ERROR")
+        raise
+
+def fetch_lessons_with_questions(conn, proficiency: str) -> List[Dict]:
+    """Fetch lessons with their questions for a specific proficiency level"""
+    try:
+        # Use a fresh connection to avoid transaction conflicts
+        fresh_conn = psycopg2.connect(**POSTGRES_CONFIG)
+        
+        with fresh_conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            # Map proficiency categories to database values
+            if proficiency == 'beginner':
+                level_filter = "proficiency_level LIKE 'A%'"
+            elif proficiency == 'intermediate':
+                level_filter = "proficiency_level LIKE 'B%'"
+            elif proficiency == 'advanced':
+                level_filter = "proficiency_level LIKE 'C%'"
+            else:
+                raise ValueError(f"Unknown proficiency level: {proficiency}")
+            
+            # Get lessons with passage text (concatenate multiple passages)
+            cursor.execute(f"""
+                SELECT 
+                    l.id,
+                    l.title,
+                    l.description,
+                    COALESCE(
+                        STRING_AGG(p.content, E'\n\n---\n\n' ORDER BY p.sort_order), 
+                        l.text
+                    ) as text,
+                    l.topic,
+                    l.proficiency_level,
+                    l.estimated_duration as "estimatedDuration",
+                    l.approval_status as "approvalStatus"
+                FROM practise_improve_pilot.lessons l
+                LEFT JOIN practise_improve_pilot.passages p ON p.lesson_id = l.id 
+                    AND p.approval_status = 'approved'
+                WHERE l.approval_status = 'approved' AND {level_filter}
+                GROUP BY l.id, l.title, l.description, l.text, l.topic, l.proficiency_level, l.estimated_duration, l.approval_status
+                ORDER BY l.topic, l.id
+            """)
+            
+            lessons = cursor.fetchall()
+            
+            # Get questions for each lesson and set the proficiency to the category
+            for lesson in lessons:
+                lesson['proficiency'] = proficiency  # Set to category (beginner/intermediate/advanced)
+                try:
+                    cursor.execute("""
+                        SELECT 
+                            q.question_text as question,
+                            q.question_type as type,
+                            q.options,
+                            q.correct_answer_index as correct,
+                            q.correct_answer as "correctAnswer",
+                            q.acceptable_answers as "acceptableAnswers",
+                            q.word_limit as "wordLimit",
+                            q.placeholder,
+                            q.sort_order
+                        FROM practise_improve_pilot.questions q
+                        JOIN practise_improve_pilot.passages p ON q.passage_id = p.id::text
+                        WHERE p.lesson_id = %s
+                        ORDER BY q.sort_order
+                    """, (lesson['id'],))
+                    
+                    questions = cursor.fetchall()
+                    lesson['questions'] = [dict(q) for q in questions]
+                except Exception as qe:
+                    print_progress(f"Error fetching questions for lesson {lesson['id']}: {qe}", "WARNING")
+                    lesson['questions'] = []  # Set empty questions if query fails
+            
+            fresh_conn.close()
+            return [dict(lesson) for lesson in lessons]
+            
+    except Exception as e:
+        print_progress(f"Error fetching {proficiency} lessons: {e}", "ERROR")
+        raise
+
+def fetch_passages_with_questions(conn, proficiency: str) -> List[Dict]:
+    """Fetch passages with their questions for a specific proficiency level (passage-focused)"""
+    try:
+        # Use a fresh connection to avoid transaction conflicts
+        fresh_conn = psycopg2.connect(**POSTGRES_CONFIG)
+        
+        with fresh_conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            # Map proficiency categories to database values
+            if proficiency == 'beginner':
+                level_filter = "l.proficiency_level LIKE 'A%'"
+            elif proficiency == 'intermediate':
+                level_filter = "l.proficiency_level LIKE 'B%'"
+            elif proficiency == 'advanced':
+                level_filter = "l.proficiency_level LIKE 'C%'"
+            else:
+                raise ValueError(f"Unknown proficiency level: {proficiency}")
+            
+            # Get passages with lesson context and their questions
+            cursor.execute(f"""
+                SELECT 
+                    l.id as lesson_id,
+                    l.title as lesson_title,
+                    l.description as lesson_description,
+                    l.topic as lesson_topic,
+                    l.proficiency_level as lesson_proficiency,
+                    l.estimated_duration as lesson_estimated_duration,
+                    l.approval_status as lesson_approval_status,
+                    
+                    p.id as passage_id,
+                    p.title as passage_title,
+                    p.content as passage_content,
+                    p.sort_order as passage_sort_order,
+                    p.approval_status as passage_approval_status,
+                    p.word_count as passage_word_count,
+                    p.reading_level as passage_reading_level,
+                    p.source as passage_source
+                    
+                FROM practise_improve_pilot.lessons l
+                INNER JOIN practise_improve_pilot.passages p ON p.lesson_id = l.id
+                WHERE l.approval_status = 'approved' 
+                    AND p.approval_status = 'approved' 
+                    AND {level_filter}
+                ORDER BY l.topic, l.id, p.sort_order
+            """)
+            
+            passages = cursor.fetchall()
+            
+            # Get questions for each passage
+            for passage in passages:
+                passage['proficiency'] = proficiency  # Set to category (beginner/intermediate/advanced)
+                try:
+                    cursor.execute("""
+                        SELECT 
+                            q.id as question_id,
+                            q.question_text as question,
+                            q.question_type as type,
+                            q.options,
+                            q.correct_answer_index as correct,
+                            q.correct_answer as "correctAnswer",
+                            q.acceptable_answers as "acceptableAnswers",
+                            q.word_limit as "wordLimit",
+                            q.placeholder,
+                            q.sort_order,
+                            q.points,
+                            q.approval_status as question_approval_status
+                        FROM practise_improve_pilot.questions q
+                        WHERE q.passage_id = %s::text
+                            AND q.approval_status = 'approved'
+                        ORDER BY q.sort_order
+                    """, (passage['passage_id'],))
+                    
+                    questions = cursor.fetchall()
+                    passage['questions'] = [dict(q) for q in questions]
+                    passage['question_count'] = len(questions)
+                    passage['total_points'] = sum(q.get('points', 0) for q in questions)
+                    
+                except Exception as qe:
+                    print_progress(f"Error fetching questions for passage {passage['passage_id']}: {qe}", "WARNING")
+                    passage['questions'] = []  # Set empty questions if query fails
+                    passage['question_count'] = 0
+                    passage['total_points'] = 0
+            
+            fresh_conn.close()
+            # Filter out passages with no questions
+            passages_with_questions = [dict(p) for p in passages if p.get('question_count', 0) > 0]
+            return passages_with_questions
+            
+    except Exception as e:
+        print_progress(f"Error fetching {proficiency} passages: {e}", "ERROR")
+        raise
+
+def fetch_topics(conn) -> List[str]:
+    """Fetch all distinct topics"""
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT DISTINCT topic FROM practise_improve_pilot.lessons WHERE approval_status = 'approved' AND topic IS NOT NULL AND topic != '' ORDER BY topic")
+            topics = [row[0] for row in cursor.fetchall() if row[0] and row[0].strip()]
+            return topics
+    except Exception as e:
+        print_progress(f"Error fetching topics: {e}", "ERROR")
+        raise
+
+def batch_write_lessons(lessons: List[Dict], proficiency: str):
+    """Write lessons to DynamoDB using batch operations"""
+    table = dynamodb.Table(LESSONS_TABLE)
+    
+    # Process in batches of 25 (DynamoDB limit)
+    batch_size = 25
+    total_lessons = len(lessons)
+    
+    for i in range(0, total_lessons, batch_size):
+        batch = lessons[i:i + batch_size]
+        
+        with table.batch_writer() as batch_writer:
+            for lesson in batch:
+                # Prepare item for DynamoDB
+                item = {
+                    'proficiency': proficiency,  # Category: beginner/intermediate/advanced
+                    'proficiency_level': lesson.get('proficiency_level', ''),  # Original: A1, B2, C1, etc.
+                    'id': lesson['id'],
+                    'title': lesson['title'],
+                    'description': lesson.get('description', ''),
+                    'text': lesson.get('text', ''),
+                    'topic': lesson['topic'],
+                    'estimatedDuration': lesson.get('estimatedDuration', 0),
+                    'approvalStatus': lesson.get('approvalStatus', ''),
+                    'questions': lesson.get('questions', [])
+                }
+                
+                # Clean up None values
+                item = {k: v for k, v in item.items() if v is not None}
+                
+                batch_writer.put_item(Item=item)
+        
+        print_progress(f"Written batch {i//batch_size + 1} of {proficiency} lessons ({len(batch)} items)")
+
+def batch_write_passages(passages: List[Dict], table_name: str):
+    """Write passages to DynamoDB in batches"""
+    table = dynamodb.Table(table_name)
+    
+    print_progress(f"Writing {len(passages)} passages to {table_name}...")
+    
+    # DynamoDB batch write limit is 25 items
+    batch_size = 25
+    successful_writes = 0
+    
+    for i in range(0, len(passages), batch_size):
+        batch = passages[i:i + batch_size]
+        
+        try:
+            with table.batch_writer() as batch_writer:
+                for passage in batch:
+                    # Clean up the passage data and ensure proper types
+                    clean_passage = {}
+                    for k, v in passage.items():
+                        if v is not None:
+                            # Ensure numeric fields are numbers
+                            if k in ['lesson_id', 'passage_word_count', 'question_count', 'total_points']:
+                                clean_passage[k] = int(v) if v != '' else 0
+                            # passage_id should remain as string (UUID)
+                            elif k == 'passage_id':
+                                clean_passage[k] = str(v)
+                            # Ensure string fields are strings
+                            elif k in ['proficiency', 'lesson_title', 'passage_title']:
+                                clean_passage[k] = str(v)
+                            # Convert empty strings to None (skip them)
+                            elif v == '':
+                                continue
+                            else:
+                                clean_passage[k] = v
+                    
+                    batch_writer.put_item(Item=clean_passage)
+                    successful_writes += 1
+                    
+            print_progress(f"Batch {i//batch_size + 1}: Wrote {len(batch)} passages")
+            
+        except Exception as e:
+            print_progress(f"Error writing batch {i//batch_size + 1}: {e}", "ERROR")
+            print_progress(f"Sample passage data: {batch[0] if batch else 'No passages in batch'}", "DEBUG")
+            raise
+    
+    print_progress(f"Successfully wrote {successful_writes} passages to {table_name}")
+
+def batch_write_topics(topics: List[str]):
+    """Write topics to DynamoDB"""
+    table = dynamodb.Table(TOPICS_TABLE)
+    
+    # Filter out empty or None topics
+    valid_topics = [topic for topic in topics if topic and topic.strip()]
+    
+    if not valid_topics:
+        print_progress("No valid topics to write to DynamoDB")
+        return
+    
+    with table.batch_writer() as batch_writer:
+        for topic in valid_topics:
+            batch_writer.put_item(Item={'topic': topic.strip()})
+    
+    print_progress(f"Written {len(valid_topics)} topics to DynamoDB (filtered from {len(topics)} total)")
+
+def write_cache_metadata():
+    """Write cache metadata"""
+    table = dynamodb.Table(CACHE_METADATA_TABLE)
+    
+    metadata = {
+        'cache_type': 'lesson_cache',
+        'lastUpdated': int(time.time() * 1000),
+        'source': 'postgres-migration',
+        'migrationTimestamp': int(time.time() * 1000),
+        'tables': {
+            'lessons': LESSONS_TABLE,
+            'passages': PASSAGES_TABLE,
+            'topics': TOPICS_TABLE
+        },
+        'structure': {
+            'lessons': 'lesson-focused (concatenated passages)',
+            'passages': 'passage-focused (individual passages with questions)'
+        }
+    }
+    
+    table.put_item(Item=metadata)
+    print_progress("Cache metadata written to DynamoDB")
+
+def main():
+    """Main migration function"""
+    start_time = time.time()
+    print_progress("Starting PostgreSQL to DynamoDB migration")
+    
+    # Create tables
+    print_progress("Creating DynamoDB tables...")
+    if not (create_lessons_table() and create_passages_table() and create_topics_table() and create_cache_metadata_table()):
+        print_progress("Failed to create tables", "ERROR")
+        return
+    
+    # Verify all tables exist and are active before proceeding
+    print_progress("Verifying tables are ready...")
+    if not (verify_table_exists(LESSONS_TABLE) and 
+            verify_table_exists(PASSAGES_TABLE) and 
+            verify_table_exists(TOPICS_TABLE) and 
+            verify_table_exists(CACHE_METADATA_TABLE)):
+        print_progress("Not all tables are ready", "ERROR")
+        return
+    
+    # Connect to PostgreSQL
+    print_progress("Connecting to PostgreSQL...")
+    conn = get_postgres_connection()
+    
+    try:
+        # Fetch data from PostgreSQL
+        print_progress("Fetching data from PostgreSQL...")
+        
+        # Use ThreadPoolExecutor for parallel fetching
+        with ThreadPoolExecutor(max_workers=7) as executor:
+            # Fetch lessons for all proficiency levels in parallel (original approach)
+            beginner_future = executor.submit(fetch_lessons_with_questions, conn, 'beginner')
+            intermediate_future = executor.submit(fetch_lessons_with_questions, conn, 'intermediate')
+            advanced_future = executor.submit(fetch_lessons_with_questions, conn, 'advanced')
+            
+            # Fetch passages for all proficiency levels in parallel (new passage-focused approach)
+            beginner_passages_future = executor.submit(fetch_passages_with_questions, conn, 'beginner')
+            intermediate_passages_future = executor.submit(fetch_passages_with_questions, conn, 'intermediate')
+            advanced_passages_future = executor.submit(fetch_passages_with_questions, conn, 'advanced')
+            
+            topics_future = executor.submit(fetch_topics, conn)
+            
+            # Get results
+            beginner_lessons = beginner_future.result()
+            intermediate_lessons = intermediate_future.result()
+            advanced_lessons = advanced_future.result()
+            
+            beginner_passages = beginner_passages_future.result()
+            intermediate_passages = intermediate_passages_future.result()
+            advanced_passages = advanced_passages_future.result()
+            
+            topics = topics_future.result()
+        
+        total_lessons = len(beginner_lessons) + len(intermediate_lessons) + len(advanced_lessons)
+        total_passages = len(beginner_passages) + len(intermediate_passages) + len(advanced_passages)
+        
+        print_progress(f"Fetched {len(beginner_lessons)} beginner, {len(intermediate_lessons)} intermediate, {len(advanced_lessons)} advanced lessons")
+        print_progress(f"Fetched {len(beginner_passages)} beginner, {len(intermediate_passages)} intermediate, {len(advanced_passages)} advanced passages")
+        print_progress(f"Fetched {len(topics)} topics")
+        
+        # Write to DynamoDB in parallel
+        print_progress("Writing data to DynamoDB...")
+        
+        # Write to DynamoDB in parallel
+        print_progress("Writing data to DynamoDB...")
+        
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            # Write lessons for all proficiency levels in parallel (using original approach)
+            beginner_lessons_future = executor.submit(batch_write_lessons, beginner_lessons, 'beginner')
+            intermediate_lessons_future = executor.submit(batch_write_lessons, intermediate_lessons, 'intermediate')
+            advanced_lessons_future = executor.submit(batch_write_lessons, advanced_lessons, 'advanced')
+            
+            # Write passages to the new passages table
+            all_passages = beginner_passages + intermediate_passages + advanced_passages
+            passages_future = executor.submit(batch_write_passages, all_passages, PASSAGES_TABLE)
+            
+            topics_future = executor.submit(batch_write_topics, topics)
+            
+            # Wait for all writes to complete
+            beginner_lessons_future.result()
+            intermediate_lessons_future.result()
+            advanced_lessons_future.result()
+            passages_future.result()
+            topics_future.result()
+        
+        # Write metadata
+        write_cache_metadata()
+        
+        duration = time.time() - start_time
+        
+        print_progress(f"Migration completed successfully!")
+        print_progress(f"Total lessons migrated: {total_lessons}")
+        print_progress(f"Total passages migrated: {total_passages}")
+        print_progress(f"Total topics migrated: {len(topics)}")
+        print_progress(f"Migration duration: {duration:.2f} seconds")
+        
+    except Exception as e:
+        print_progress(f"Migration failed: {e}", "ERROR")
+        raise
+    finally:
+        conn.close()
+        print_progress("PostgreSQL connection closed")
+
+if __name__ == "__main__":
+    # Load environment variables from .env file if it exists
+    env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+    if os.path.exists(env_file):
+        with open(env_file, 'r') as f:
+            for line in f:
+                if '=' in line and not line.startswith('#'):
+                    key, value = line.strip().split('=', 1)
+                    os.environ[key] = value
+    
+    main()

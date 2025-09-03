@@ -1,0 +1,428 @@
+# HTTPie commands for PNI User Progress API - Comprehensive Examples
+
+# ===========================================
+# BASIC USER PROGRESS OPERATIONS
+# ===========================================
+
+# Get User Progress
+http GET http://localhost:3000/api/user-progress userId==default-user
+
+# ===========================================
+# PNI Learning Platform - Pure HTTPie Commands
+# User Progress API Testing
+# ===========================================
+
+# Base configuration
+# BASE_URL="http://localhost:3000"
+# DEFAULT_USER="default-user"
+
+# ===========================================
+# BASIC USER PROGRESS OPERATIONS
+# ===========================================
+
+# Get User Progress
+http GET http://localhost:3000/api/user-progress userId==default-user
+
+# Save User Progress with Enhanced Data
+http POST http://localhost:3000/api/user-progress \
+  userId="default-user" \
+  progressData:='{
+    "lesson_id": 1,
+    "lesson_level": "beginner", 
+    "status": "completed",
+    "score": 95,
+    "completion_time": 1690000000,
+    "last_accessed": "2025-08-29T12:00:00Z",
+    "created_at": "2025-08-29T10:00:00Z",
+    "totalTimeSpent": 1800,
+    "attemptCount": 2,
+    "responses": [
+      {
+        "questionIndex": 0,
+        "question": "What is a noun?",
+        "userAnswer": "Person, place, or thing",
+        "correctAnswer": "Person, place, or thing", 
+        "isCorrect": true,
+        "explanation": "A noun names a person, place, or thing."
+      }
+    ]
+  }'
+
+# ===========================================
+# LESSON PROGRESS OPERATIONS  
+# ===========================================
+
+# Get Lesson Progress
+http GET http://localhost:3000/api/lesson-progress \
+  userId==default-user \
+  lessonId==1 \
+  level==beginner
+
+# Save Complete Lesson Progress (Beginner)
+http POST http://localhost:3000/api/lesson-progress \
+  userId="default-user" \
+  lessonId:=1 \
+  level="beginner" \
+  progressUpdate:='{
+    "status": "completed",
+    "score": 9,
+    "totalTimeSpent": 1200,
+    "lessonState": {
+      "currentQuestionIndex": 10,
+      "waitingForAnswer": false,
+      "lessonComplete": true,
+      "partialAnswers": {"0": "A person, place, or thing", "1": "Describing word", "2": "Action word"},
+      "sessionState": "completed",
+      "timestamp": "2025-08-29T12:45:00Z"
+    },
+    "responses": [
+      {"questionIndex": 0, "question": "What is a noun?", "userAnswer": "Person, place, or thing", "correctAnswer": "Person, place, or thing", "isCorrect": true},
+      {"questionIndex": 1, "question": "What is a verb?", "userAnswer": "Action word", "correctAnswer": "Action word", "isCorrect": true}
+    ]
+  }'
+
+# Save In-Progress Lesson (Intermediate)
+http POST http://localhost:3000/api/lesson-progress \
+  userId="default-user" \
+  lessonId:=2 \
+  level="intermediate" \
+  progressUpdate:='{
+    "status": "in_progress",
+    "score": 7,
+    "totalTimeSpent": 900,
+    "lessonState": {
+      "currentQuestionIndex": 5,
+      "waitingForAnswer": true, 
+      "lessonComplete": false,
+      "partialAnswers": {"0": "Ecosystem", "1": "Producer", "2": "Consumer"},
+      "sessionState": "active",
+      "timestamp": "2025-08-29T13:00:00Z"
+    },
+    "responses": [
+      {"questionIndex": 0, "question": "What is an ecosystem?", "userAnswer": "Community of living things", "correctAnswer": "Community of living things", "isCorrect": true},
+      {"questionIndex": 1, "question": "What is a producer?", "userAnswer": "Makes food", "correctAnswer": "Makes food", "isCorrect": true}
+    ]
+  }'
+
+# Update Lesson Progress with Partial State
+http POST http://localhost:3000/api/lesson-progress \
+  userId="default-user" \
+  lessonId:=1 \
+  level="beginner" \
+  progressUpdate:='{
+    "status": "in_progress",
+    "totalTimeSpent": 900,
+    "lessonState": {
+      "currentQuestionIndex": 3,
+      "waitingForAnswer": true,
+      "lessonComplete": false,
+      "partialAnswers": {
+        "0": "A person, place, or thing",
+        "1": "Describing word", 
+        "2": "Action word"
+      },
+      "sessionState": "active",
+      "timestamp": "2025-08-29T12:30:00Z"
+    }
+  }'
+
+# ===========================================
+# LESSON SCORING
+# ===========================================
+
+# Save Lesson Score with Detailed Responses
+http POST http://localhost:3000/api/lesson-score \
+  userId="default-user" \
+  lessonId:=1 \
+  level="beginner" \
+  score:=8 \
+  totalQuestions:=10 \
+  responses:='[
+    {
+      "questionIndex": 0,
+      "question": "What is a noun?",
+      "userAnswer": "Person, place, or thing",
+      "correctAnswer": "Person, place, or thing",
+      "isCorrect": true,
+      "explanation": "Correct! A noun names a person, place, or thing."
+    },
+    {
+      "questionIndex": 1,
+      "question": "What is a verb?", 
+      "userAnswer": "Action word",
+      "correctAnswer": "Action word",
+      "isCorrect": true,
+      "explanation": "Excellent! A verb shows action or being."
+    }
+  ]'
+
+# ===========================================
+# PASSAGE-FOCUSED TESTING (NEW)
+# ===========================================
+
+# Get Passages by Lesson ID
+http GET http://localhost:3000/api/passages lessonId==1
+
+# Get Specific Passage
+http GET http://localhost:3000/api/passages lessonId==1 passageId==passage-1
+
+# Get Passages by Proficiency Level
+http GET http://localhost:3000/api/passages proficiency==beginner
+
+# ===========================================
+# COMPLETION TRACKING
+# ===========================================
+
+# Check if Lesson is Completed
+http GET http://localhost:3000/api/lesson-completion \
+  userId==default-user \
+  lessonId==1 \
+  level==beginner
+
+# Get All Completed Lessons
+http GET http://localhost:3000/api/completed-lessons userId==default-user
+
+# ===========================================
+# BATCH OPERATIONS
+# ===========================================
+
+# Create Multiple Test Users with Progress
+# User 1
+http POST http://localhost:3000/api/user-progress \
+  userId="student-001" \
+  progressData:='{"lesson_id": 1, "lesson_level": "beginner", "status": "completed", "score": 85, "totalTimeSpent": 1200}'
+
+# User 2  
+http POST http://localhost:3000/api/user-progress \
+  userId="student-002" \
+  progressData:='{"lesson_id": 1, "lesson_level": "beginner", "status": "in_progress", "score": 70, "totalTimeSpent": 800}'
+
+# User 3
+http POST http://localhost:3000/api/user-progress \
+  userId="student-003" \
+  progressData:='{"lesson_id": 2, "lesson_level": "intermediate", "status": "completed", "score": 92, "totalTimeSpent": 1500}'
+
+# ===========================================
+# ERROR TESTING
+# ===========================================
+
+# Test with invalid user ID
+http GET http://localhost:3000/api/user-progress userId==nonexistent-user
+
+# Test with invalid lesson ID
+http GET http://localhost:3000/api/lesson-progress userId==default-user lessonId==999 level==beginner
+
+# Test with malformed data
+http POST http://localhost:3000/api/user-progress userId="test" progressData:='{"invalid": "data"}'
+
+# ===========================================
+# PERFORMANCE TESTING
+# ===========================================
+
+# Test concurrent requests (run multiple times)
+# http GET http://localhost:3000/api/user-progress userId==default-user &
+# http GET http://localhost:3000/api/lesson-progress userId==default-user lessonId==1 level==beginner &
+# wait
+
+# ===========================================
+# CLEANUP OPERATIONS
+# ===========================================
+
+# Delete test user progress (if DELETE endpoint exists)
+# http DELETE http://localhost:3000/api/user-progress userId==test-user
+
+# Reset lesson progress (if RESET endpoint exists)  
+# http POST http://localhost:3000/api/lesson-progress/reset userId==test-user lessonId==1 level==beginner
+
+# ===========================================
+# LESSON PROGRESS OPERATIONS
+# ===========================================
+
+# Get Lesson Progress
+http GET http://localhost:3000/api/lesson-progress \
+  userId==default-user \
+  lessonId==1 \
+  level==beginner
+
+# --- Save 3 realistic lesson progresses ---
+http POST http://localhost:3000/api/lesson-progress \
+  userId="default-user" \
+  lessonId:=1 \
+  level="beginner" \
+  progressUpdate:='{
+    "status": "completed",
+    "score": 9,
+    "totalTimeSpent": 1200,
+    "lessonState": {
+      "currentQuestionIndex": 10,
+      "waitingForAnswer": false,
+      "lessonComplete": true,
+      "partialAnswers": {"0": "A person, place, or thing", "1": "Describing word", "2": "Action word"},
+      "sessionState": "completed",
+      "timestamp": "2025-08-27T12:45:00Z"
+    },
+    "responses": [
+      {"questionIndex": 0, "question": "What is a noun?", "userAnswer": "Person, place, or thing", "correctAnswer": "Person, place, or thing", "isCorrect": true, "explanation": "A noun names a person, place, or thing."},
+      {"questionIndex": 1, "question": "What is a verb?", "userAnswer": "Action word", "correctAnswer": "Action word", "isCorrect": true, "explanation": "A verb shows action or being."}
+    ]
+  }'
+
+http POST http://localhost:3000/api/lesson-progress \
+  userId="default-user" \
+  lessonId:=2 \
+  level="intermediate" \
+  progressUpdate:='{
+    "status": "in_progress",
+    "score": 7,
+    "totalTimeSpent": 900,
+    "lessonState": {
+      "currentQuestionIndex": 5,
+      "waitingForAnswer": true,
+      "lessonComplete": false,
+      "partialAnswers": {"0": "Ecosystem", "1": "Producer", "2": "Consumer"},
+      "sessionState": "active",
+      "timestamp": "2025-08-27T13:00:00Z"
+    },
+    "responses": [
+      {"questionIndex": 0, "question": "What is an ecosystem?", "userAnswer": "Community of living things", "correctAnswer": "Community of living things", "isCorrect": true},
+      {"questionIndex": 1, "question": "What is a producer?", "userAnswer": "Makes food", "correctAnswer": "Makes food", "isCorrect": true}
+    ]
+  }'
+
+http POST http://localhost:3000/api/lesson-progress \
+  userId="default-user" \
+  lessonId:=1 \
+  level="advanced" \
+  progressUpdate:='{
+    "status": "completed",
+    "score": 10,
+    "totalTimeSpent": 1500,
+    "lessonState": {
+      "currentQuestionIndex": 12,
+      "waitingForAnswer": false,
+      "lessonComplete": true,
+      "partialAnswers": {"0": "Literary analysis", "1": "Theme", "2": "Symbolism"},
+      "sessionState": "completed",
+      "timestamp": "2025-08-27T13:30:00Z"
+    },
+    "responses": [
+      {"questionIndex": 0, "question": "What is literary analysis?", "userAnswer": "Study of literature", "correctAnswer": "Study of literature", "isCorrect": true},
+      {"questionIndex": 1, "question": "What is a theme?", "userAnswer": "Main idea", "correctAnswer": "Main idea", "isCorrect": true}
+    ]
+  }'
+# Update Lesson Progress with State
+http POST http://localhost:3000/api/lesson-progress \
+  userId="default-user" \
+  lessonId:=1 \
+  level="beginner" \
+  progressUpdate:='{
+    "status": "in_progress",
+    "totalTimeSpent": 900,
+    "lessonState": {
+      "currentQuestionIndex": 3,
+      "waitingForAnswer": true,
+      "lessonComplete": false,
+      "partialAnswers": {
+        "0": "A person, place, or thing",
+        "1": "Describing word",
+        "2": "Action word"
+      },
+      "sessionState": "active",
+      "timestamp": "2025-08-27T12:30:00Z"
+    }
+  }'
+
+# ===========================================
+# LESSON SCORING
+# ===========================================
+
+# Save Lesson Score
+http POST http://localhost:3000/api/lesson-score \
+  userId="default-user" \
+  lessonId:=1 \
+  level="beginner" \
+  score:=8 \
+  totalQuestions:=10 \
+  responses:='[
+    {
+      "questionIndex": 0,
+      "question": "What is a noun?",
+      "userAnswer": "Person, place, or thing",
+      "correctAnswer": "Person, place, or thing",
+      "isCorrect": true,
+      "explanation": "Correct! A noun names a person, place, or thing."
+    },
+    {
+      "questionIndex": 1,
+      "question": "What is a verb?",
+      "userAnswer": "Action word",
+      "correctAnswer": "Action word",
+      "isCorrect": true,
+      "explanation": "Excellent! A verb shows action or being."
+    }
+  ]'
+
+# ===========================================
+# COMPLETION TRACKING
+# ===========================================
+
+# Check if Lesson is Completed
+http GET http://localhost:3000/api/lesson-completion \
+  userId==default-user \
+  lessonId==1 \
+  level==beginner
+
+# Get All Completed Lessons
+http GET http://localhost:3000/api/completed-lessons userId==default-user
+
+# ===========================================
+# CHAT HISTORY (Future API Endpoints)
+# ===========================================
+
+# Save Chat History (when API is created)
+# http POST http://localhost:3000/api/chat-history \
+#   userId="default-user" \
+#   lessonId:=1 \
+#   level="beginner" \
+#   messages:='[
+#     {
+#       "id": "msg-1",
+#       "content": "Hello! Let'\''s start learning about nouns.",
+#       "isBot": true,
+#       "timestamp": "2025-08-27T12:00:00Z",
+#       "type": "text"
+#     }
+#   ]'
+
+# Get Chat History (when API is created)
+# http GET http://localhost:3000/api/chat-history \
+#   userId==default-user \
+#   lessonId==1 \
+#   level==beginner
+
+# ===========================================
+# LESSON STATE (Future API Endpoints)
+# ===========================================
+
+# Save Lesson State (when API is created)
+# http POST http://localhost:3000/api/lesson-state \
+#   userId="default-user" \
+#   lessonId:=1 \
+#   level="beginner" \
+#   state:='{
+#     "currentQuestionIndex": 5,
+#     "waitingForAnswer": false,
+#     "lessonComplete": false,
+#     "partialAnswers": {
+#       "0": "A person, place, or thing",
+#       "1": "Describing word"
+#     },
+#     "sessionState": "active",
+#     "timestamp": "2025-08-27T12:30:00Z"
+#   }'
+
+# Get Lesson State (when API is created)
+# http GET http://localhost:3000/api/lesson-state \
+#   userId==default-user \
+#   lessonId==1 \
+#   level==beginner

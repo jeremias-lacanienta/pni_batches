@@ -1,0 +1,257 @@
+# ===========================================
+# PNI Learning Platform - Pure HTTPie Commands  
+# Lesson Progress Manager API Testing
+# ===========================================
+
+# Base configuration
+# BASE_URL="http://localhost:3000"
+# DEFAULT_USER="default-user"
+
+# ===========================================
+# LESSON LIFECYCLE OPERATIONS
+# ===========================================
+
+# Start a lesson (sets status to 'started')
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="start" 
+  userId="default-user" 
+  lessonId:=6 
+  level="beginner"
+
+# Set lesson to in_progress (when at least 1 question answered)
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="setInProgress" 
+  userId="default-user" 
+  lessonId:=6 
+  level="beginner" 
+  answeredQuestions:=2 
+  responses:='[
+    {"questionIndex": 0, "question": "What is the main idea?", "userAnswer": "Water cycle", "correctAnswer": "Water cycle", "isCorrect": true},
+    {"questionIndex": 1, "question": "What is precipitation?", "userAnswer": "Rain", "correctAnswer": "Rain", "isCorrect": true}
+  ]' 
+  lessonState:='{
+    "currentQuestionIndex": 2,
+    "waitingForAnswer": true,
+    "lessonComplete": false,
+    "partialAnswers": {"0": "Water cycle", "1": "Rain"},
+    "sessionState": "active",
+    "timestamp": "2025-08-29T14:00:00Z"
+  }'
+
+# Complete a lesson (when all questions answered)
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="complete" 
+  userId="default-user" 
+  lessonId:=6 
+  level="beginner" 
+  totalQuestions:=5 
+  answeredQuestions:=5 
+  score:=90 
+  responses:='[
+    {"questionIndex": 0, "question": "What is the main idea?", "userAnswer": "Water cycle", "correctAnswer": "Water cycle", "isCorrect": true},
+    {"questionIndex": 1, "question": "What is precipitation?", "userAnswer": "Rain", "correctAnswer": "Rain", "isCorrect": true},
+    {"questionIndex": 2, "question": "What causes evaporation?", "userAnswer": "Sun", "correctAnswer": "Sun", "isCorrect": true},
+    {"questionIndex": 3, "question": "Where does water collect?", "userAnswer": "Rivers", "correctAnswer": "Bodies of water", "isCorrect": false},
+    {"questionIndex": 4, "question": "Why is water cycle important?", "userAnswer": "Life", "correctAnswer": "Life", "isCorrect": true}
+  ]' 
+  lessonState:='{
+    "currentQuestionIndex": 4,
+    "waitingForAnswer": false,
+    "lessonComplete": true,
+    "partialAnswers": {},
+    "sessionState": "completed",
+    "timestamp": "2025-08-29T14:30:00Z"
+  }'
+
+# Retry a lesson (resets all progress)
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="retry" 
+  userId="default-user" 
+  lessonId:=6 
+  level="beginner"
+
+# Auto-update lesson progress (automatically determines status)
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="update" 
+  userId="default-user" 
+  lessonId:=2 
+  level="intermediate" 
+  totalQuestions:=8 
+  answeredQuestions:=3 
+  responses:='[
+    {"questionIndex": 0, "question": "How does Singapore differ?", "userAnswer": "Modern vs traditional", "correctAnswer": "Modern skyline vs slow pace", "isCorrect": true},
+    {"questionIndex": 1, "question": "What is the atmosphere?", "userAnswer": "Diverse", "correctAnswer": "Blend of ancient and modern", "isCorrect": true},
+    {"questionIndex": 2, "question": "What is notable about Bali?", "userAnswer": "Rice fields", "correctAnswer": "Lush rice fields and beaches", "isCorrect": true}
+  ]'
+
+# Get lesson progress summary
+http GET http://localhost:3000/api/lesson-progress-manager 
+  userId==default-user 
+  lessonId==6 
+  level==beginner
+
+# ===========================================
+# PASSAGE-FOCUSED LESSON PROGRESS (NEW)
+# ===========================================
+
+# Start passage-focused lesson
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="start" 
+  userId="default-user" 
+  lessonId:=1 
+  level="beginner" 
+  isPassageFocused:=true
+
+# Update progress with passage-specific data
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="update" 
+  userId="default-user" 
+  lessonId:=1 
+  level="beginner" 
+  totalQuestions:=15 
+  answeredQuestions:=8 
+  isPassageFocused:=true 
+  passageProgress:='{
+    "currentPassageIndex": 1,
+    "currentQuestionIndex": 2,
+    "passagesCompleted": 1,
+    "totalPassages": 3
+  }' 
+  responses:='[
+    {"questionIndex": 0, "passageId": "passage-1", "question": "What is the main theme?", "userAnswer": "Adventure", "correctAnswer": "Adventure", "isCorrect": true},
+    {"questionIndex": 1, "passageId": "passage-1", "question": "Who is the protagonist?", "userAnswer": "Sarah", "correctAnswer": "Sarah", "isCorrect": true}
+  ]'
+
+# ===========================================
+# TESTING SCENARIOS
+# ===========================================
+
+# Scenario 1: Complete lesson workflow
+echo "=== Testing: Complete Lesson Workflow ==="
+
+# Start new lesson
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="start" 
+  userId="test-user-001" 
+  lessonId:=8 
+  level="beginner"
+
+# Answer first few questions  
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="update" 
+  userId="test-user-001" 
+  lessonId:=8 
+  level="beginner" 
+  totalQuestions:=10 
+  answeredQuestions:=3 
+  responses:='[
+    {"questionIndex": 0, "question": "Test Q1", "userAnswer": "Answer 1", "correctAnswer": "Answer 1", "isCorrect": true},
+    {"questionIndex": 1, "question": "Test Q2", "userAnswer": "Answer 2", "correctAnswer": "Answer 2", "isCorrect": true},
+    {"questionIndex": 2, "question": "Test Q3", "userAnswer": "Wrong", "correctAnswer": "Answer 3", "isCorrect": false}
+  ]'
+
+# Complete the lesson
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="complete" 
+  userId="test-user-001" 
+  lessonId:=8 
+  level="beginner" 
+  totalQuestions:=10 
+  answeredQuestions:=10 
+  score:=80 
+  responses:='[
+    {"questionIndex": 0, "question": "Q1", "userAnswer": "A1", "correctAnswer": "A1", "isCorrect": true},
+    {"questionIndex": 1, "question": "Q2", "userAnswer": "A2", "correctAnswer": "A2", "isCorrect": true},
+    {"questionIndex": 2, "question": "Q3", "userAnswer": "A3", "correctAnswer": "A3", "isCorrect": false},
+    {"questionIndex": 3, "question": "Q4", "userAnswer": "A4", "correctAnswer": "A4", "isCorrect": true},
+    {"questionIndex": 4, "question": "Q5", "userAnswer": "A5", "correctAnswer": "A5", "isCorrect": true}
+  ]'
+
+# Check final status
+http GET http://localhost:3000/api/lesson-progress-manager 
+  userId==test-user-001 
+  lessonId==8 
+  level==beginner
+
+# ===========================================
+# BULK OPERATIONS FOR TESTING
+# ===========================================
+
+# Create progress for multiple users
+# User 1 - Beginner completed
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="complete" 
+  userId="student-001" 
+  lessonId:=1 
+  level="beginner" 
+  totalQuestions:=10 
+  answeredQuestions:=10 
+  score:=85
+
+# User 2 - Intermediate in progress  
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="update" 
+  userId="student-002" 
+  lessonId:=2 
+  level="intermediate" 
+  totalQuestions:=12 
+  answeredQuestions:=6 
+  score:=50
+
+# User 3 - Advanced started
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="start" 
+  userId="student-003" 
+  lessonId:=3 
+  level="advanced"
+
+# ===========================================
+# ERROR HANDLING TESTS
+# ===========================================
+
+# Test with invalid action
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="invalid-action" 
+  userId="test-user" 
+  lessonId:=1 
+  level="beginner"
+
+# Test with missing required fields
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="start"
+
+# Test with invalid user ID
+http GET http://localhost:3000/api/lesson-progress-manager 
+  userId==invalid-user 
+  lessonId==1 
+  level==beginner
+
+# ===========================================
+# PERFORMANCE TESTING
+# ===========================================
+
+# Multiple concurrent requests (uncomment to test)
+# for i in {1..5}; do
+#   http POST http://localhost:3000/api/lesson-progress-manager 
+#     action="start" 
+#     userId="perf-test-$i" 
+#     lessonId:=$i 
+#     level="beginner" &
+# done
+# wait
+
+# ===========================================
+# CLEANUP OPERATIONS
+# ===========================================
+
+# Reset all test users (if reset endpoint exists)
+# http POST http://localhost:3000/api/lesson-progress-manager 
+#   action="reset" 
+#   userId="test-user-001"
+
+# Retry lesson to reset progress
+http POST http://localhost:3000/api/lesson-progress-manager 
+  action="retry" 
+  userId="test-user-001" 
+  lessonId:=8 
+  level="beginner"

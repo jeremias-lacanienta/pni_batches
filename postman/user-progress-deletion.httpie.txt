@@ -1,0 +1,141 @@
+# User Progress Deletion Commands - HTTPie Collection
+# Use these commands to delete user progress for testing
+
+# =============================================================================
+# USER PROGRESS DELETION COMMANDS
+# =============================================================================
+
+# 1. DELETE SPECIFIC LESSON PROGRESS
+# Removes progress for a specific lesson while keeping other lesson data intact
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=1&level=beginner"
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=2&level=beginner"
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=1&level=intermediate"
+
+# For custom user ID:
+http DELETE "localhost:3000/api/clear-lesson?userId=test-user&lessonId=1&level=beginner"
+
+# 2. CLEAR ALL USER PROGRESS (Reset to empty state)
+# Posts empty progress data to effectively reset everything
+http POST localhost:3000/api/user-progress \
+  Content-Type:application/json \
+  userId="default-user" \
+  progressData:='{
+    "profile": {"name": "Student", "avatar": ""},
+    "completedLessons": [],
+    "progress": []
+  }'
+
+# For custom user ID:
+http POST localhost:3000/api/user-progress \
+  Content-Type:application/json \
+  userId="test-user" \
+  progressData:='{
+    "profile": {"name": "Test User", "avatar": ""},
+    "completedLessons": [],
+    "progress": []
+  }'
+
+# 3. VERIFY DELETION - Check current user progress
+http GET "localhost:3000/api/user-progress?userId=default-user"
+http GET "localhost:3000/api/user-progress?userId=test-user"
+
+# =============================================================================
+# BATCH OPERATIONS - Clear Multiple Lessons at Once
+# =============================================================================
+
+# Clear all beginner lessons (lessons 1-5)
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=1&level=beginner"
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=2&level=beginner"
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=3&level=beginner"
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=4&level=beginner"
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=5&level=beginner"
+
+# Clear all intermediate lessons (lessons 1-5)
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=1&level=intermediate"
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=2&level=intermediate"
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=3&level=intermediate"
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=4&level=intermediate"
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=5&level=intermediate"
+
+# Clear all advanced lessons (lessons 1-5)
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=1&level=advanced"
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=2&level=advanced"
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=3&level=advanced"
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=4&level=advanced"
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=5&level=advanced"
+
+# =============================================================================
+# QUICK TEST RESET COMMANDS
+# =============================================================================
+
+# Complete test reset for default user (run this to start fresh)
+echo "🧹 Clearing all user progress for testing..."
+
+# Method 1: Use complete reset (recommended)
+http POST localhost:3000/api/user-progress \
+  Content-Type:application/json \
+  userId="default-user" \
+  progressData:='{
+    "profile": {"name": "Student", "avatar": ""},
+    "completedLessons": [],
+    "progress": []
+  }'
+
+echo "✅ All user progress cleared. Verifying..."
+http GET "localhost:3000/api/user-progress?userId=default-user"
+
+# =============================================================================
+# SHELL SCRIPTS FOR CONVENIENCE
+# =============================================================================
+
+# To use these as shell scripts, save them as .sh files:
+
+# clear-user-progress.sh
+#!/bin/bash
+# USER_ID=${1:-default-user}
+# echo "Clearing all progress for user: $USER_ID"
+# http POST localhost:3000/api/user-progress \
+#   Content-Type:application/json \
+#   userId="$USER_ID" \
+#   progressData:='{"profile": {"name": "Student", "avatar": ""}, "completedLessons": [], "progress": []}'
+# echo "✅ Progress cleared for $USER_ID"
+
+# clear-lesson.sh  
+#!/bin/bash
+# USER_ID=${1:-default-user}
+# LESSON_ID=${2:-1}
+# LEVEL=${3:-beginner}
+# echo "Clearing lesson $LESSON_ID ($LEVEL) for user: $USER_ID"
+# http DELETE "localhost:3000/api/clear-lesson?userId=$USER_ID&lessonId=$LESSON_ID&level=$LEVEL"
+# echo "✅ Lesson cleared"
+
+# =============================================================================
+# ERROR TESTING - Verify error handling
+# =============================================================================
+
+# Test missing parameters (should return 400 errors)
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=1"  # Missing level
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&level=beginner"  # Missing lessonId
+http DELETE "localhost:3000/api/clear-lesson?lessonId=1&level=beginner"  # Missing userId
+
+# Test invalid data types
+http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=invalid&level=beginner"  # Invalid lessonId
+
+# =============================================================================
+# USAGE EXAMPLES
+# =============================================================================
+
+# Example workflow for testing:
+# 1. Start with clean slate:
+#    http POST localhost:3000/api/user-progress Content-Type:application/json userId="default-user" progressData:='{"profile": {"name": "Student", "avatar": ""}, "completedLessons": [], "progress": []}'
+#
+# 2. Run your tests to generate progress data
+#
+# 3. Check what progress was created:
+#    http GET "localhost:3000/api/user-progress?userId=default-user"
+#
+# 4. Clear specific lessons if needed:
+#    http DELETE "localhost:3000/api/clear-lesson?userId=default-user&lessonId=1&level=beginner"
+#
+# 5. Or reset everything again:
+#    http POST localhost:3000/api/user-progress Content-Type:application/json userId="default-user" progressData:='{"profile": {"name": "Student", "avatar": ""}, "completedLessons": [], "progress": []}'

@@ -1,0 +1,9 @@
+
+Generate a script that will:
+ - Run locally (not on AWS Lambda or EC2) and require no extra installation of tools on AWS.
+ - Create DynamoDB tables for lessons and topics if they do not exist, based on the cache structure in lambda/simple-cache-builder.js (lessons grouped by proficiency, each lesson with questions, and a topics list).
+ - Copy all lesson and question data from PostgreSQL to DynamoDB, preserving the cache structure (including beginner, intermediate, advanced lesson groups, and topics).
+ - Use the fastest method available for bulk copy (e.g., AWS DynamoDB BatchWrite, parallel processing).
+ - The script should handle table creation, schema mapping, and efficient data transfer.
+ - Output progress and errors clearly.
+ - Prefer Python (boto3 + psycopg2) or Node.js (aws-sdk + pg) for implementation.
