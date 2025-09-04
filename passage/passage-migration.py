@@ -216,7 +216,7 @@ def fetch_passages_complete(environment: str) -> List[Dict]:
             -- Lesson information
             l.id as lesson_id,
             l.title as lesson_title,
-            l.description as lesson_description,
+            l.summary as lesson_description,
             l.topic as lesson_topic,
             l.proficiency_level as lesson_proficiency,
             l.estimated_duration as lesson_estimated_duration,
@@ -264,7 +264,7 @@ def fetch_passages_complete(environment: str) -> List[Dict]:
                 l.proficiency_level LIKE 'C%'
             )
         GROUP BY 
-            l.id, l.title, l.description, l.topic, l.proficiency_level, 
+            l.id, l.title, l.summary, l.topic, l.proficiency_level, 
             l.estimated_duration, l.approval_status,
             p.id, p.title, p.content, p.sort_order, p.approval_status,
             p.word_count, p.reading_level, p.source
