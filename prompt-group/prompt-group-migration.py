@@ -2,6 +2,10 @@
 """
 Prompt Group Migration Lambda Function
 Exports prompts from PostgreSQL to S3 as YAML format
+
+Environment Detection:
+- eu-west-1 region = prod environment
+- us-east-1 region = dev environment
 """
 
 import json
@@ -22,6 +26,19 @@ try:
 except ImportError as e:
     logger.error(f"Missing required module: {e}")
     raise
+
+
+def get_environment_from_region() -> str:
+    """Determine environment based on AWS region"""
+    region = os.getenv('AWS_REGION') or os.getenv('AWS_DEFAULT_REGION')
+    
+    if region == 'eu-west-1':
+        return 'prod'
+    elif region == 'us-east-1':
+        return 'dev'
+    else:
+        logger.warning(f"Unknown or missing region: {region}, defaulting to dev environment")
+        return 'dev'
 
 
 def get_database_config(environment: str) -> Dict[str, Any]:
@@ -158,10 +175,9 @@ def lambda_handler(event, context):
     """Lambda entry point"""
     try:
         # Determine environment from AWS region
-        region = context.invoked_function_arn.split(':')[3]  # Extract region from ARN
-        environment = 'dev' if region == 'us-east-1' else 'prod'
+        environment = get_environment_from_region()
         
-        logger.info(f"Detected region: {region}, using environment: {environment}")
+        logger.info(f"Detected environment: {environment} (eu-west-1=prod, us-east-1=dev)")
         
         if environment not in ['dev', 'prod']:
             return {
@@ -199,12 +215,31 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Export prompts as YAML')
-    parser.add_argument('environment', choices=['dev', 'prod'], help='Environment (dev or prod)')
+    parser.add_argument('--environment', choices=['dev', 'prod'], 
+                       help='Environment (dev or prod) - overrides region detection')
+    parser.add_argument('--region', choices=['us-east-1', 'eu-west-1'], 
+                       help='AWS region (us-east-1=dev, eu-west-1=prod)')
     args = parser.parse_args()
     
-    # Simulate Lambda event
-    event = {'environment': args.environment}
-    context = None
+    # Set environment variable for region if provided
+    if args.region:
+        os.environ['AWS_REGION'] = args.region
+        environment = 'dev' if args.region == 'us-east-1' else 'prod'
+    elif args.environment:
+        # Set region based on environment
+        region = 'us-east-1' if args.environment == 'dev' else 'eu-west-1'
+        os.environ['AWS_REGION'] = region
+        environment = args.environment
+    else:
+        # Use region detection
+        environment = get_environment_from_region()
+    
+    # Simulate Lambda context (no longer needed for region detection)
+    class MockContext:
+        pass
+    
+    event = {}
+    context = MockContext()
     
     response = lambda_handler(event, context)
     print(json.dumps(response, indent=2))
